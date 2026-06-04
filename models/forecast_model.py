@@ -1,4 +1,3 @@
-forecast_model.py 
 """
 Climate Risk Forecasting Model (2025–2030) — SmartHaven Digital
 ================================================================
