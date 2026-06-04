@@ -7,6 +7,7 @@ import os
 
 sys.path.append(os.path.dirname(__file__))
 from models.tcfd_model import load_and_enrich, scenario_analysis, compute_climate_var
+from models.forecast_model import run_all_forecasts, FORECAST_YEARS, SCENARIO_TRAJECTORIES
 
 # ── Page config ──────────────────────────────────────────────────────────────
 st.set_page_config(
@@ -98,8 +99,9 @@ with col4:
 st.divider()
 
 # ── Tabs ──────────────────────────────────────────────────────────────────────
-tab1, tab2, tab3, tab4 = st.tabs([
-    "📊 Risk Overview", "🎯 Scenario Analysis", "📉 Climate VaR", "📋 Data Table"
+tab1, tab2, tab3, tab4, tab5 = st.tabs([
+    "📊 Risk Overview", "🎯 Scenario Analysis", "📉 Climate VaR",
+    "🔮 Forecast 2025–2030", "📋 Data Table"
 ])
 
 # ─── Tab 1: Risk Overview ──────────────────────────────────────────────────────
@@ -127,7 +129,7 @@ with tab1:
         fig1.add_hline(y=7.5, line_dash="dash", line_color="red", opacity=0.4, annotation_text="High transition threshold")
         fig1.add_vline(x=7.5, line_dash="dash", line_color="orange", opacity=0.4, annotation_text="High physical threshold")
         fig1.update_layout(height=420, plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)")
-        st.plotly_chart(fig1, use_container_width=True)
+        st.plotly_chart(fig1, width="stretch")
 
     with col_b:
         st.markdown("#### Carbon Intensity by Sector")
@@ -143,7 +145,7 @@ with tab1:
             title="Carbon Intensity Heatbar by Sector",
         )
         fig2.update_layout(height=420, coloraxis_showscale=False, plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)")
-        st.plotly_chart(fig2, use_container_width=True)
+        st.plotly_chart(fig2, width="stretch")
 
     # TCFD disclosure vs risk
     st.markdown("#### TCFD Disclosure Score vs Risk Exposure")
@@ -163,7 +165,7 @@ with tab1:
         title="Does better disclosure correlate with lower climate risk?",
     )
     fig3.update_layout(height=360, plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)")
-    st.plotly_chart(fig3, use_container_width=True)
+    st.plotly_chart(fig3, width="stretch")
 
 
 # ─── Tab 2: Scenario Analysis ─────────────────────────────────────────────────
@@ -190,7 +192,7 @@ with tab2:
         title="Carbon Cost Exposure Across TCFD Scenarios",
     )
     fig4.update_layout(height=420, xaxis_tickangle=-35, plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)")
-    st.plotly_chart(fig4, use_container_width=True)
+    st.plotly_chart(fig4, width="stretch")
 
     col_s1, col_s2 = st.columns(2)
     with col_s1:
@@ -202,7 +204,7 @@ with tab2:
             "Transition Risk Multiplier": ["1.6×", "1.2×", "0.7×"],
             "Dominant Risk": ["Transition", "Balanced", "Physical"],
         })
-        st.dataframe(scenario_info, use_container_width=True, hide_index=True)
+        st.dataframe(scenario_info, width="stretch", hide_index=True)
 
     with col_s2:
         st.markdown("#### Stranded asset exposure")
@@ -213,7 +215,7 @@ with tab2:
             st.dataframe(stranded.rename(columns={
                 "carbon_intensity_tCO2e": "Carbon Intensity",
                 "carbon_cost_exposure_usd_m": "Carbon Cost Exp. (USD M)"
-            }), use_container_width=True, hide_index=True)
+            }), width="stretch", hide_index=True)
 
 
 # ─── Tab 3: Climate VaR ───────────────────────────────────────────────────────
@@ -246,7 +248,7 @@ with tab3:
         paper_bgcolor="rgba(0,0,0,0)",
         legend=dict(orientation="h", y=1.1),
     )
-    st.plotly_chart(fig5, use_container_width=True)
+    st.plotly_chart(fig5, width="stretch")
 
     # Interactive single-company VaR
     st.markdown("#### 🔍 Single company deep-dive")
@@ -279,11 +281,255 @@ with tab3:
         plot_bgcolor="rgba(0,0,0,0)",
         paper_bgcolor="rgba(0,0,0,0)",
     )
-    st.plotly_chart(fig6, use_container_width=True)
+    st.plotly_chart(fig6, width="stretch")
 
 
-# ─── Tab 4: Data Table ────────────────────────────────────────────────────────
+# ─── Tab 4: Forecast 2025–2030 ───────────────────────────────────────────────
 with tab4:
+    st.markdown("#### 🔮 Climate Risk Forecast — 2025 to 2030")
+    st.caption(
+        "Forward-looking projections per company under each TCFD scenario. "
+        "Includes carbon intensity trajectory, risk score evolution, "
+        "Climate VaR trend, transition pathway classification, and early warning tipping points."
+    )
+
+    col_fc1, col_fc2 = st.columns([1, 2])
+    with col_fc1:
+        forecast_company = st.selectbox(
+            "Select company", sorted(df["company"].unique()), key="fc_company"
+        )
+        forecast_scenario = st.selectbox(
+            "Forecast scenario", ["1.5C", "2C", "3C"], index=1, key="fc_scenario"
+        )
+
+    company_row = df[df["company"] == forecast_company].iloc[0].to_dict()
+
+    with st.spinner("Running forecast model..."):
+        fc = run_all_forecasts(company_row, forecast_scenario)
+
+    with col_fc2:
+        pw_color = {"🟢 Early Mover": "#27ae60", "🔵 On Track": "#3498db",
+                    "🟡 Laggard": "#f39c12", "🔴 Stranded Risk": "#e74c3c"}
+        color = pw_color.get(fc["pathway"], "#888")
+        st.markdown(
+            f"<div style='background:rgba(0,0,0,0.05);border-left:4px solid {color};"
+            f"padding:12px 16px;border-radius:6px;margin-top:8px'>"
+            f"<b>Transition Pathway:</b> {fc['pathway']}<br>"
+            f"<b>Pathway Score:</b> {fc['pathway_score']} / 100<br>"
+            f"<b>Scenario:</b> {forecast_scenario} · "
+            f"<b>Company:</b> {forecast_company}"
+            f"</div>",
+            unsafe_allow_html=True,
+        )
+
+    st.divider()
+
+    # ── Early warning tipping points ──────────────────────────────────────────
+    if fc["tipping_points"]:
+        st.markdown("#### ⚠️ Early Warning — Tipping Points Detected")
+        for tp in fc["tipping_points"]:
+            st.warning(
+                f"**{tp['type']}** — crosses threshold in **{tp['year']}**  \n"
+                f"Score: {tp['value']:.2f} (threshold: {tp['threshold']})  \n"
+                f"*{tp['implication']}*"
+            )
+    else:
+        st.success(
+            f"✅ No critical tipping points detected for {forecast_company} "
+            f"under the {forecast_scenario} scenario through 2030."
+        )
+
+    st.divider()
+
+    # ── Charts row 1: Carbon intensity + Composite risk ───────────────────────
+    c1, c2 = st.columns(2)
+
+    with c1:
+        st.markdown("**Carbon Intensity Trajectory (tCO₂e / USD M revenue)**")
+        ci = fc["carbon"]
+        fig_fc1 = go.Figure()
+        fig_fc1.add_trace(go.Scatter(
+            x=ci["year"], y=ci["upper_bound"],
+            mode="lines", line=dict(width=0),
+            showlegend=False, name="Upper bound"
+        ))
+        fig_fc1.add_trace(go.Scatter(
+            x=ci["year"], y=ci["lower_bound"],
+            fill="tonexty",
+            fillcolor="rgba(52,152,219,0.15)",
+            mode="lines", line=dict(width=0),
+            name="Uncertainty band"
+        ))
+        fig_fc1.add_trace(go.Scatter(
+            x=ci["year"], y=ci["carbon_intensity"],
+            mode="lines+markers",
+            line=dict(color="#3498db", width=2.5),
+            marker=dict(size=7),
+            name="Carbon intensity",
+        ))
+        # Add 2023 baseline
+        fig_fc1.add_hline(
+            y=company_row.get("carbon_intensity_tCO2e", 100),
+            line_dash="dash", line_color="gray", opacity=0.5,
+            annotation_text="2023 baseline",
+        )
+        fig_fc1.update_layout(
+            height=340, xaxis_title="Year",
+            yaxis_title="tCO₂e / USD M revenue",
+            plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+            legend=dict(orientation="h", y=-0.2),
+        )
+        st.plotly_chart(fig_fc1, width="stretch")
+
+    with c2:
+        st.markdown("**Composite Climate Risk Score (0–10)**")
+        rk = fc["risk"]
+        fig_fc2 = go.Figure()
+        fig_fc2.add_trace(go.Scatter(
+            x=rk["year"], y=rk["physical_risk"],
+            mode="lines+markers", name="Physical Risk",
+            line=dict(color="#e67e22", width=2), marker=dict(size=6),
+        ))
+        fig_fc2.add_trace(go.Scatter(
+            x=rk["year"], y=rk["transition_risk"],
+            mode="lines+markers", name="Transition Risk",
+            line=dict(color="#8e44ad", width=2), marker=dict(size=6),
+        ))
+        fig_fc2.add_trace(go.Scatter(
+            x=rk["year"], y=rk["composite_risk"],
+            mode="lines+markers", name="Composite Risk",
+            line=dict(color="#e74c3c", width=3, dash="dot"), marker=dict(size=8),
+        ))
+        fig_fc2.add_hline(y=7.5, line_dash="dash", line_color="red",
+                          opacity=0.4, annotation_text="High risk threshold")
+        fig_fc2.update_layout(
+            height=340, xaxis_title="Year", yaxis=dict(range=[0, 11]),
+            plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+            legend=dict(orientation="h", y=-0.2),
+        )
+        st.plotly_chart(fig_fc2, width="stretch")
+
+    # ── Charts row 2: Climate VaR trend + Carbon cost path ────────────────────
+    c3, c4 = st.columns(2)
+
+    with c3:
+        st.markdown("**Climate VaR Trend (% revenue at risk)**")
+        vr = fc["var"]
+        fig_fc3 = go.Figure()
+        fig_fc3.add_trace(go.Scatter(
+            x=vr["year"], y=vr["cvar_95"],
+            fill="tozeroy", fillcolor="rgba(231,76,60,0.12)",
+            mode="lines+markers", name="CVaR 95%",
+            line=dict(color="#e74c3c", width=2.5), marker=dict(size=7),
+        ))
+        fig_fc3.add_trace(go.Scatter(
+            x=vr["year"], y=vr["var_95"],
+            mode="lines+markers", name="VaR 95%",
+            line=dict(color="#f39c12", width=2), marker=dict(size=6),
+        ))
+        fig_fc3.add_trace(go.Scatter(
+            x=vr["year"], y=vr["median_loss"],
+            mode="lines", name="Median loss",
+            line=dict(color="#95a5a6", width=1.5, dash="dot"),
+        ))
+        fig_fc3.update_layout(
+            height=340, xaxis_title="Year",
+            yaxis_title="% Revenue at Risk",
+            plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+            legend=dict(orientation="h", y=-0.2),
+        )
+        st.plotly_chart(fig_fc3, width="stretch")
+
+    with c4:
+        st.markdown("**Carbon Cost Exposure Path (USD M)**")
+        fig_fc4 = go.Figure()
+        fig_fc4.add_trace(go.Bar(
+            x=rk["year"], y=rk["carbon_cost_usd_m"],
+            marker_color=rk["carbon_cost_usd_m"],
+            marker_colorscale="YlOrRd",
+            name="Carbon cost",
+            text=rk["carbon_price"].apply(lambda p: f"${p}/t"),
+            textposition="outside",
+        ))
+        fig_fc4.update_layout(
+            height=340, xaxis_title="Year",
+            yaxis_title="Carbon Cost (USD M)",
+            plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+            showlegend=False,
+        )
+        st.plotly_chart(fig_fc4, width="stretch")
+
+    # ── Multi-company comparison ───────────────────────────────────────────────
+    st.divider()
+    st.markdown("#### 📊 Portfolio-Level Forecast Comparison")
+    st.caption("Compare transition pathways and 2030 composite risk across all companies")
+
+    all_pathways = []
+    for _, row in df.iterrows():
+        row_dict = row.to_dict()
+        fc_all = run_all_forecasts(row_dict, forecast_scenario)
+        risk_2030 = fc_all["risk"].iloc[-1]
+        var_2030 = fc_all["var"].iloc[-1]
+        all_pathways.append({
+            "Company": row["company"],
+            "Sector": row["sector"],
+            "Pathway": fc_all["pathway"],
+            "Pathway Score": fc_all["pathway_score"],
+            "2030 Composite Risk": risk_2030["composite_risk"],
+            "2030 Physical Risk": risk_2030["physical_risk"],
+            "2030 Transition Risk": risk_2030["transition_risk"],
+            "2030 CVaR 95%": var_2030["cvar_95"],
+            "2030 Carbon Cost (USD M)": risk_2030["carbon_cost_usd_m"],
+            "Tipping Points": len(fc_all["tipping_points"]),
+        })
+
+    pathway_df = pd.DataFrame(all_pathways).sort_values("2030 Composite Risk", ascending=False)
+
+    fig_fc5 = px.bar(
+        pathway_df,
+        x="Company", y="2030 Composite Risk",
+        color="Pathway",
+        color_discrete_map={
+            "🟢 Early Mover": "#27ae60",
+            "🔵 On Track": "#3498db",
+            "🟡 Laggard": "#f39c12",
+            "🔴 Stranded Risk": "#e74c3c",
+        },
+        hover_data=["Sector", "Pathway Score", "2030 CVaR 95%", "Tipping Points"],
+        title=f"2030 Composite Risk by Transition Pathway — {forecast_scenario} Scenario",
+        labels={"2030 Composite Risk": "Composite Risk Score (0-10)", "Company": ""},
+    )
+    fig_fc5.add_hline(y=7.5, line_dash="dash", line_color="red",
+                      opacity=0.4, annotation_text="High risk threshold")
+    fig_fc5.update_layout(
+        height=400, xaxis_tickangle=-25,
+        plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+        legend=dict(orientation="h", y=1.12),
+    )
+    st.plotly_chart(fig_fc5, width="stretch")
+
+    st.dataframe(
+        pathway_df.style.apply(
+            lambda col: [
+                "color: #e74c3c" if "Stranded" in str(v)
+                else "color: #f39c12" if "Laggard" in str(v)
+                else "color: #27ae60" if "Early" in str(v)
+                else "" for v in col
+            ] if col.name == "Pathway" else [""] * len(col),
+            axis=0
+        ),
+        width="stretch", hide_index=True
+    )
+
+    csv_fc = pathway_df.to_csv(index=False).encode("utf-8")
+    st.download_button(
+        "⬇️ Download 2030 Forecast Report",
+        csv_fc, "climate_risk_forecast_2030.csv", "text/csv"
+    )
+
+
+# ─── Tab 5: Data Table ────────────────────────────────────────────────────────
+with tab5:
     st.markdown("#### Full dataset")
     display_cols = [
         "company", "sector", "risk_category", "carbon_intensity_tCO2e",
@@ -306,7 +552,7 @@ with tab4:
             "green_revenue_pct": "Green Rev %",
             "credit_rating": "Rating",
         }),
-        use_container_width=True,
+        width="stretch",
         hide_index=True,
     )
 
@@ -316,3 +562,4 @@ with tab4:
 # ── Footer ────────────────────────────────────────────────────────────────────
 st.divider()
 st.caption("SmartHaven Digital · TCFD Climate Risk Model P02 · Built with Python, Streamlit, Plotly · Faith Ndinda")
+
