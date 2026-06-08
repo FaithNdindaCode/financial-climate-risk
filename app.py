@@ -1,38 +1,299 @@
 import streamlit as st
 import pandas as pd
+import numpy as np
 import plotly.express as px
 import plotly.graph_objects as go
+import json
 import sys
 import os
 
 sys.path.append(os.path.dirname(__file__))
 from models.tcfd_model import load_and_enrich, scenario_analysis, compute_climate_var
 from models.forecast_model import run_all_forecasts, FORECAST_YEARS, SCENARIO_TRAJECTORIES
+from models.ai_insights import (
+    build_analysis_prompt, compute_sector_stats,
+    generate_insights_sync, generate_executive_summary
+)
 
-# ── Page config ──────────────────────────────────────────────────────────────
 st.set_page_config(
     page_title="TCFD Climate Risk | SmartHaven Digital",
-    page_icon="🌍",
-    layout="wide",
+    page_icon="🌍", layout="wide",
     initial_sidebar_state="expanded",
 )
 
-# ── Custom CSS ────────────────────────────────────────────────────────────────
+# ── Design System ─────────────────────────────────────────────────────────────
 st.markdown("""
 <style>
-[data-testid="stMetricValue"] { font-size: 2rem; font-weight: 600; }
-.block-container { padding-top: 1.5rem; }
-.stTabs [data-baseweb="tab"] { font-size: 0.9rem; }
+@import url('https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=DM+Sans:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500&display=swap');
+
+:root {
+  --bg:        #0d1117;
+  --surface:   #161b22;
+  --surface2:  #1c2333;
+  --border:    #30363d;
+  --gold:      #d4a853;
+  --gold-dim:  #a07830;
+  --red:       #f85149;
+  --amber:     #e3b341;
+  --green:     #3fb950;
+  --blue:      #58a6ff;
+  --text:      #e6edf3;
+  --muted:     #8b949e;
+  --serif:     'DM Serif Display', Georgia, serif;
+  --sans:      'DM Sans', sans-serif;
+  --mono:      'JetBrains Mono', monospace;
+}
+
+html, body, [class*="css"] {
+  font-family: var(--sans) !important;
+  background-color: var(--bg) !important;
+  color: var(--text) !important;
+}
+
+/* Hide default Streamlit chrome */
+#MainMenu, footer, header { visibility: hidden; }
+.block-container { padding: 0 2rem 2rem 2rem !important; max-width: 1400px !important; }
+
+/* ── Hero banner ── */
+.hero {
+  background: linear-gradient(135deg, #0d1117 0%, #161b22 50%, #1a2332 100%);
+  border: 1px solid var(--border);
+  border-bottom: 3px solid var(--gold);
+  border-radius: 12px;
+  padding: 2.5rem 3rem;
+  margin-bottom: 1.5rem;
+  position: relative;
+  overflow: hidden;
+}
+.hero::before {
+  content: '';
+  position: absolute;
+  top: -60px; right: -60px;
+  width: 240px; height: 240px;
+  background: radial-gradient(circle, rgba(212,168,83,0.12) 0%, transparent 70%);
+  border-radius: 50%;
+}
+.hero::after {
+  content: '';
+  position: absolute;
+  bottom: -40px; left: 30%;
+  width: 180px; height: 180px;
+  background: radial-gradient(circle, rgba(63,185,80,0.06) 0%, transparent 70%);
+  border-radius: 50%;
+}
+.hero-eyebrow {
+  font-family: var(--mono);
+  font-size: 0.7rem;
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+  color: var(--gold);
+  margin-bottom: 0.6rem;
+}
+.hero-title {
+  font-family: var(--serif);
+  font-size: 2.4rem;
+  font-weight: 400;
+  color: var(--text);
+  line-height: 1.2;
+  margin-bottom: 0.8rem;
+}
+.hero-title em { color: var(--gold); font-style: italic; }
+.hero-sub {
+  font-size: 0.95rem;
+  color: var(--muted);
+  line-height: 1.6;
+  max-width: 680px;
+}
+.hero-badges {
+  display: flex; gap: 0.5rem; flex-wrap: wrap;
+  margin-top: 1.2rem;
+}
+.badge {
+  font-family: var(--mono);
+  font-size: 0.68rem;
+  letter-spacing: 0.08em;
+  padding: 3px 10px;
+  border-radius: 20px;
+  border: 1px solid;
+}
+.badge-gold  { color: var(--gold);  border-color: var(--gold-dim);  background: rgba(212,168,83,0.08); }
+.badge-green { color: var(--green); border-color: #238636; background: rgba(63,185,80,0.08); }
+.badge-blue  { color: var(--blue);  border-color: #1f6feb; background: rgba(88,166,255,0.08); }
+.badge-red   { color: var(--red);   border-color: #b91c1c; background: rgba(248,81,73,0.08); }
+
+/* ── KPI cards ── */
+.kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 1rem;
+  margin-bottom: 1.5rem;
+}
+.kpi-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 1.2rem 1.4rem;
+  position: relative;
+  overflow: hidden;
+  transition: border-color 0.2s;
+}
+.kpi-card:hover { border-color: var(--gold-dim); }
+.kpi-card::after {
+  content: '';
+  position: absolute;
+  bottom: 0; left: 0; right: 0;
+  height: 2px;
+}
+.kpi-red::after   { background: var(--red); }
+.kpi-amber::after { background: var(--amber); }
+.kpi-green::after { background: var(--green); }
+.kpi-gold::after  { background: var(--gold); }
+.kpi-blue::after  { background: var(--blue); }
+.kpi-label {
+  font-family: var(--mono);
+  font-size: 0.65rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin-bottom: 0.5rem;
+}
+.kpi-value {
+  font-family: var(--serif);
+  font-size: 2rem;
+  font-weight: 400;
+  color: var(--text);
+  line-height: 1;
+}
+.kpi-delta {
+  font-family: var(--mono);
+  font-size: 0.7rem;
+  margin-top: 0.3rem;
+}
+.delta-bad  { color: var(--red); }
+.delta-warn { color: var(--amber); }
+.delta-good { color: var(--green); }
+
+/* ── Summary banner ── */
+.summary-banner {
+  background: linear-gradient(90deg, rgba(212,168,83,0.08) 0%, rgba(212,168,83,0.02) 100%);
+  border: 1px solid rgba(212,168,83,0.25);
+  border-left: 4px solid var(--gold);
+  border-radius: 8px;
+  padding: 1.1rem 1.4rem;
+  margin-bottom: 1.5rem;
+  font-size: 0.92rem;
+  line-height: 1.7;
+  color: var(--text);
+}
+.summary-label {
+  font-family: var(--mono);
+  font-size: 0.65rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--gold);
+  margin-bottom: 0.4rem;
+}
+
+/* ── Section headers ── */
+.section-header {
+  font-family: var(--serif);
+  font-size: 1.5rem;
+  color: var(--text);
+  margin: 1.8rem 0 0.3rem 0;
+  padding-bottom: 0.6rem;
+  border-bottom: 1px solid var(--border);
+}
+.section-sub {
+  font-size: 0.82rem;
+  color: var(--muted);
+  margin-bottom: 1.2rem;
+  line-height: 1.5;
+}
+
+/* ── Insight cards ── */
+.icard {
+  border-radius: 8px;
+  padding: 1rem 1.2rem;
+  margin-bottom: 0.8rem;
+  font-size: 0.88rem;
+  line-height: 1.6;
+}
+.icard b { font-weight: 600; }
+.icard-green { background: rgba(63,185,80,0.07);  border-left: 3px solid var(--green); }
+.icard-red   { background: rgba(248,81,73,0.07);  border-left: 3px solid var(--red); }
+.icard-amber { background: rgba(227,179,65,0.07); border-left: 3px solid var(--amber); }
+.icard-blue  { background: rgba(88,166,255,0.07); border-left: 3px solid var(--blue); }
+.icard-gold  { background: rgba(212,168,83,0.07); border-left: 3px solid var(--gold); }
+
+/* ── Tabs override ── */
+.stTabs [data-baseweb="tab-list"] {
+  background: var(--surface) !important;
+  border-radius: 8px;
+  padding: 4px;
+  gap: 2px;
+  border: 1px solid var(--border);
+}
+.stTabs [data-baseweb="tab"] {
+  font-family: var(--mono) !important;
+  font-size: 0.72rem !important;
+  letter-spacing: 0.06em !important;
+  text-transform: uppercase !important;
+  color: var(--muted) !important;
+  border-radius: 6px !important;
+  padding: 6px 14px !important;
+}
+.stTabs [aria-selected="true"] {
+  background: rgba(212,168,83,0.15) !important;
+  color: var(--gold) !important;
+}
+
+/* ── Sidebar ── */
+[data-testid="stSidebar"] {
+  background: var(--surface) !important;
+  border-right: 1px solid var(--border) !important;
+}
+.sidebar-title {
+  font-family: var(--mono);
+  font-size: 0.65rem;
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+  color: var(--gold);
+  margin-bottom: 1rem;
+}
+
+/* ── Metric overrides ── */
+[data-testid="stMetricValue"] { display: none; }
+
+/* ── Table ── */
+[data-testid="stDataFrame"] { border: 1px solid var(--border) !important; border-radius: 8px; }
+
+/* ── Pathway badge ── */
+.pathway-strip {
+  display: flex; align-items: center; gap: 1rem;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 1rem 1.4rem;
+  margin-bottom: 1rem;
+}
+.pathway-label {
+  font-family: var(--mono);
+  font-size: 0.65rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.pathway-value {
+  font-family: var(--serif);
+  font-size: 1.4rem;
+}
+.pathway-score {
+  font-family: var(--mono);
+  font-size: 0.8rem;
+  color: var(--muted);
+}
 </style>
 """, unsafe_allow_html=True)
-
-# ── Header ────────────────────────────────────────────────────────────────────
-st.markdown("## 🌍 TCFD Climate Risk Dashboard")
-st.markdown(
-    "**SmartHaven Digital | P02 — Financial Engineering Portfolio**  \n"
-    "TCFD-aligned physical & transition risk analysis for NSE-listed companies · Kenya market"
-)
-st.divider()
 
 # ── Load data ─────────────────────────────────────────────────────────────────
 @st.cache_data
@@ -41,525 +302,484 @@ def get_data():
 
 df_base = get_data()
 
-# ── Sidebar controls ──────────────────────────────────────────────────────────
+# ── Sidebar ───────────────────────────────────────────────────────────────────
 with st.sidebar:
-    st.markdown("### ⚙️ Controls")
-
+    st.markdown('<div class="sidebar-title">⚙ Controls</div>', unsafe_allow_html=True)
     scenario = st.selectbox(
-        "TCFD Scenario",
-        ["1.5C", "2C", "3C"],
-        index=1,
-        help="1.5C = aggressive transition | 2C = moderate | 3C = physical risk dominant"
+        "TCFD Scenario", ["1.5C", "2C", "3C"], index=1,
+        help="1.5C = aggressive transition | 2C = moderate | 3C = physical dominant"
     )
-
     sectors = st.multiselect(
-        "Filter by sector",
+        "Sectors",
         options=sorted(df_base["sector"].unique()),
         default=sorted(df_base["sector"].unique()),
     )
-
     risk_filter = st.select_slider(
-        "Minimum risk category",
+        "Minimum risk level",
         options=["🟢 Low", "🟡 Medium", "🔴 High"],
         value="🟢 Low",
     )
+    st.markdown("---")
+    st.markdown('<div class="sidebar-title">Data Sources</div>', unsafe_allow_html=True)
+    for src in ["📊 NSE fundamentals", "🛰️ Planetek Italia", "🌍 GEE / Copernicus", "🤖 Claude AI"]:
+        st.markdown(f'<div style="font-size:0.78rem;color:var(--muted);padding:3px 0">{src}</div>', unsafe_allow_html=True)
+    st.markdown("---")
+    st.markdown('<div style="font-size:0.75rem;color:var(--muted);line-height:1.8">SmartHaven Digital<br>Nairobi, Kenya<br>Faith Ndinda</div>', unsafe_allow_html=True)
 
-    st.divider()
-    st.markdown("**About this model**")
-    st.caption(
-        "Monte Carlo CVaR with 10,000 simulations. "
-        "Scenario multipliers follow NGFS/TCFD guidance. "
-        "Carbon cost based on scenario carbon price (USD/tonne CO₂e)."
-    )
-    st.caption("📁 [GitHub repo](https://github.com/FaithNdindaCode/financial-engineering-portfolio)")
-
-# ── Apply scenario + filters ──────────────────────────────────────────────────
+# ── Apply filters ─────────────────────────────────────────────────────────────
 df = scenario_analysis(df_base, scenario)
 df = df[df["sector"].isin(sectors)]
-
 risk_order = {"🟢 Low": 0, "🟡 Medium": 1, "🔴 High": 2}
-min_risk = risk_order[risk_filter]
-df = df[df["risk_category"].map(risk_order) >= min_risk]
+df = df[df["risk_category"].map(risk_order) >= risk_order[risk_filter]]
+
+# ── Hero ──────────────────────────────────────────────────────────────────────
+high_n = (df["risk_category"] == "🔴 High").sum()
+scenario_desc = {
+    "1.5C": "aggressive energy transition · carbon at $85/tonne by 2030",
+    "2C":   "moderate transition · balanced physical & policy risk",
+    "3C":   "physical risk dominant · severe weather intensification",
+}
+st.markdown(f"""
+<div class="hero">
+  <div class="hero-eyebrow">SmartHaven Digital &nbsp;·&nbsp; P02 Financial Engineering Portfolio</div>
+  <div class="hero-title">Kenya Climate <em>Risk</em> Intelligence</div>
+  <div class="hero-sub">
+    TCFD-aligned physical &amp; transition risk analysis for {len(df)} NSE-listed companies.
+    Under the <strong style="color:var(--gold)">{scenario}</strong> scenario
+    ({scenario_desc.get(scenario, '')}),
+    <strong style="color:var(--red)">{high_n} companies</strong> are in the high-risk category —
+    with combined carbon cost exposure of
+    <strong style="color:var(--amber)">USD {df['carbon_cost_exposure_usd_m'].sum():,.0f}M</strong>.
+  </div>
+  <div class="hero-badges">
+    <span class="badge badge-gold">TCFD Aligned</span>
+    <span class="badge badge-green">Monte Carlo VaR</span>
+    <span class="badge badge-blue">2025–2030 Forecast</span>
+    <span class="badge badge-blue">AI Insights</span>
+    <span class="badge badge-red">Geospatial Risk Map</span>
+    <span class="badge badge-gold">NSE Kenya</span>
+  </div>
+</div>
+""", unsafe_allow_html=True)
+
+# ── Executive summary ─────────────────────────────────────────────────────────
+from models.ai_insights import generate_executive_summary
+summary = generate_executive_summary(df, scenario)
+st.markdown(f"""
+<div class="summary-banner">
+  <div class="summary-label">📋 Executive Summary — {scenario} Scenario</div>
+  {summary}
+</div>
+""", unsafe_allow_html=True)
 
 # ── KPI row ───────────────────────────────────────────────────────────────────
-col1, col2, col3, col4 = st.columns(4)
+worst = df.nlargest(1, "var_95").iloc[0]
+best_tcfd = df.nlargest(1, "tcfd_disclosure_score").iloc[0]
+avg_var = df["var_95"].mean()
+total_carbon = df["carbon_cost_exposure_usd_m"].sum()
+avg_tcfd = df["tcfd_disclosure_score"].mean()
 
-with col1:
-    st.metric("Companies analysed", len(df))
-with col2:
-    high_risk = (df["risk_category"] == "🔴 High").sum()
-    st.metric("High risk companies", high_risk, delta=f"{high_risk/len(df)*100:.0f}% of portfolio")
-with col3:
-    avg_var = df["var_95"].mean()
-    st.metric("Avg Climate VaR (95%)", f"{avg_var:.1f}%", help="Revenue at risk under selected scenario")
-with col4:
-    total_carbon_cost = df["carbon_cost_exposure_usd_m"].sum()
-    st.metric("Total carbon cost exposure", f"USD {total_carbon_cost:,.0f}M")
+st.markdown(f"""
+<div class="kpi-grid">
+  <div class="kpi-card kpi-blue">
+    <div class="kpi-label">Companies Analysed</div>
+    <div class="kpi-value">{len(df)}</div>
+    <div class="kpi-delta delta-warn">{len(sectors)} sectors</div>
+  </div>
+  <div class="kpi-card kpi-red">
+    <div class="kpi-label">High Risk</div>
+    <div class="kpi-value">{high_n}</div>
+    <div class="kpi-delta delta-bad">{high_n/max(len(df),1)*100:.0f}% of portfolio</div>
+  </div>
+  <div class="kpi-card kpi-amber">
+    <div class="kpi-label">Avg Climate VaR 95%</div>
+    <div class="kpi-value">{avg_var:.1f}%</div>
+    <div class="kpi-delta delta-bad">revenue at risk</div>
+  </div>
+  <div class="kpi-card kpi-gold">
+    <div class="kpi-label">Carbon Cost Exposure</div>
+    <div class="kpi-value">USD {total_carbon:,.0f}M</div>
+    <div class="kpi-delta delta-warn">{scenario} scenario</div>
+  </div>
+  <div class="kpi-card kpi-green">
+    <div class="kpi-label">Avg TCFD Score</div>
+    <div class="kpi-value">{avg_tcfd:.0f}<span style="font-size:1rem;color:var(--muted)">/100</span></div>
+    <div class="kpi-delta delta-good">disclosure quality</div>
+  </div>
+</div>
+""", unsafe_allow_html=True)
 
-st.divider()
+# ── Plotly theme ──────────────────────────────────────────────────────────────
+PLOT_LAYOUT = dict(
+    plot_bgcolor="#161b22",
+    paper_bgcolor="#161b22",
+    font=dict(family="DM Sans", color="#8b949e", size=11),
+    xaxis=dict(gridcolor="#21262d", linecolor="#30363d", tickcolor="#30363d"),
+    yaxis=dict(gridcolor="#21262d", linecolor="#30363d", tickcolor="#30363d"),
+    margin=dict(t=40, b=20, l=10, r=10),
+)
+
+COLOR_RISK = {"🔴 High": "#f85149", "🟡 Medium": "#e3b341", "🟢 Low": "#3fb950"}
 
 # ── Tabs ──────────────────────────────────────────────────────────────────────
-tab1, tab2, tab3, tab4, tab5 = st.tabs([
-    "📊 Risk Overview", "🎯 Scenario Analysis", "📉 Climate VaR",
-    "🔮 Forecast 2025–2030", "📋 Data Table"
+tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
+    "📊 Risk Overview", "🎯 Scenarios", "📉 Climate VaR",
+    "🔮 Forecast 2030", "🗺️ Geo Map",
+    "🤖 AI Insights", "📋 Data"
 ])
 
-# ─── Tab 1: Risk Overview ──────────────────────────────────────────────────────
+
+# ─── TAB 1: Risk Overview ─────────────────────────────────────────────────────
 with tab1:
-    col_a, col_b = st.columns(2)
+    st.markdown('<div class="section-header">Risk Landscape</div>', unsafe_allow_html=True)
+    st.markdown('<div class="section-sub">Where does each company sit on the physical vs transition risk spectrum? Bubble size = revenue. Companies in the top-right quadrant face compounding risk from both dimensions.</div>', unsafe_allow_html=True)
 
-    with col_a:
-        st.markdown("#### Physical vs Transition Risk")
+    ca, cb = st.columns(2)
+    with ca:
         fig1 = px.scatter(
-            df,
-            x="adj_physical_risk",
-            y="adj_transition_risk",
-            size="revenue_usd_millions",
-            color="risk_category",
+            df, x="adj_physical_risk", y="adj_transition_risk",
+            size="revenue_usd_millions", color="risk_category",
             hover_name="company",
-            hover_data={"sector": True, "carbon_intensity_tCO2e": True, "var_95": True},
-            color_discrete_map={"🔴 High": "#e74c3c", "🟡 Medium": "#f39c12", "🟢 Low": "#27ae60"},
-            labels={
-                "adj_physical_risk": f"Physical Risk Score ({scenario})",
-                "adj_transition_risk": f"Transition Risk Score ({scenario})",
-                "revenue_usd_millions": "Revenue (USD M)",
-            },
-            title=f"Risk Matrix — {scenario} Scenario",
+            hover_data={"sector": True, "carbon_intensity_tCO2e": True, "var_95": True, "credit_rating": True},
+            color_discrete_map=COLOR_RISK,
+            labels={"adj_physical_risk": f"Physical Risk Score ({scenario})", "adj_transition_risk": f"Transition Risk Score ({scenario})"},
         )
-        fig1.add_hline(y=7.5, line_dash="dash", line_color="red", opacity=0.4, annotation_text="High transition threshold")
-        fig1.add_vline(x=7.5, line_dash="dash", line_color="orange", opacity=0.4, annotation_text="High physical threshold")
-        fig1.update_layout(height=420, plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)")
-        st.plotly_chart(fig1, width="stretch")
+        fig1.add_hline(y=7.5, line_dash="dash", line_color="#f85149", opacity=0.4, annotation_text="High transition threshold", annotation_font_color="#f85149")
+        fig1.add_vline(x=7.5, line_dash="dash", line_color="#e3b341", opacity=0.4, annotation_text="High physical threshold", annotation_font_color="#e3b341")
+        fig1.update_layout(**PLOT_LAYOUT, height=400, title=dict(text="Risk Matrix", font=dict(family="DM Serif Display", size=15, color="#e6edf3")))
+        st.plotly_chart(fig1, use_container_width=True)
 
-    with col_b:
-        st.markdown("#### Carbon Intensity by Sector")
-        sector_avg = df.groupby("sector")["carbon_intensity_tCO2e"].mean().reset_index().sort_values("carbon_intensity_tCO2e", ascending=True)
+    with cb:
         fig2 = px.bar(
-            sector_avg,
-            x="carbon_intensity_tCO2e",
-            y="sector",
-            orientation="h",
+            df.sort_values("carbon_intensity_tCO2e", ascending=True),
+            x="carbon_intensity_tCO2e", y="company", orientation="h",
             color="carbon_intensity_tCO2e",
-            color_continuous_scale="RdYlGn_r",
-            labels={"carbon_intensity_tCO2e": "Avg Carbon Intensity (tCO₂e/USD M rev)", "sector": ""},
-            title="Carbon Intensity Heatbar by Sector",
+            color_continuous_scale=[[0,"#3fb950"],[0.5,"#e3b341"],[1,"#f85149"]],
+            labels={"carbon_intensity_tCO2e": "tCO₂e / USD M revenue", "company": ""},
         )
-        fig2.update_layout(height=420, coloraxis_showscale=False, plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)")
-        st.plotly_chart(fig2, width="stretch")
+        fig2.update_layout(**PLOT_LAYOUT, height=400, coloraxis_showscale=False,
+                           title=dict(text="Carbon Intensity Ranking", font=dict(family="DM Serif Display", size=15, color="#e6edf3")))
+        st.plotly_chart(fig2, use_container_width=True)
 
-    # TCFD disclosure vs risk
-    st.markdown("#### TCFD Disclosure Score vs Risk Exposure")
+    # 3 callout cards
+    i1, i2, i3 = st.columns(3)
+    worst_c = df.nlargest(1, "carbon_intensity_tCO2e").iloc[0]
+    highest_var_c = df.nlargest(1, "var_95").iloc[0]
+    with i1:
+        st.markdown(f'<div class="icard icard-red">🏭 <b>Highest Carbon Intensity</b><br><b>{worst_c["company"]}</b> emits {worst_c["carbon_intensity_tCO2e"]:.0f} tCO₂e per USD M revenue. {worst_c["sector"]} faces the steepest carbon pricing exposure under any transition scenario.</div>', unsafe_allow_html=True)
+    with i2:
+        st.markdown(f'<div class="icard icard-amber">📉 <b>Most Revenue at Risk</b><br><b>{highest_var_c["company"]}</b> has {highest_var_c["var_95"]:.1f}% of revenue at risk in a 95th-percentile climate loss scenario — highest in the portfolio.</div>', unsafe_allow_html=True)
+    with i3:
+        st.markdown(f'<div class="icard icard-green">✅ <b>Best Disclosure</b><br><b>{best_tcfd["company"]}</b> scores {best_tcfd["tcfd_disclosure_score"]}/100 on TCFD disclosure — best positioned to access green bonds and DFI concessional finance.</div>', unsafe_allow_html=True)
+
+    st.markdown('<div class="section-header" style="font-size:1.1rem">Does transparency reduce risk?</div>', unsafe_allow_html=True)
+    st.markdown('<div class="section-sub">A negative correlation here would confirm that companies investing in climate disclosure also manage risk better — a key argument for mandatory TCFD reporting in Kenya.</div>', unsafe_allow_html=True)
     fig3 = px.scatter(
-        df,
-        x="tcfd_disclosure_score",
-        y="var_95",
-        color="sector",
-        size="carbon_cost_exposure_usd_m",
-        hover_name="company",
-        trendline="ols",
-        labels={
-            "tcfd_disclosure_score": "TCFD Disclosure Score (0–100)",
-            "var_95": "Climate VaR 95% (% revenue)",
-            "carbon_cost_exposure_usd_m": "Carbon Cost Exposure (USD M)",
-        },
-        title="Does better disclosure correlate with lower climate risk?",
+        df, x="tcfd_disclosure_score", y="var_95",
+        color="sector", size="carbon_intensity_tCO2e",
+        hover_name="company", trendline="ols",
+        labels={"tcfd_disclosure_score": "TCFD Disclosure Score (0–100)", "var_95": "Climate VaR 95% (% revenue)"},
+        color_discrete_sequence=["#d4a853","#3fb950","#58a6ff","#f85149","#e3b341","#bc8cff","#39d353","#ffa657","#ff7b72"],
     )
-    fig3.update_layout(height=360, plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)")
-    st.plotly_chart(fig3, width="stretch")
+    fig3.update_layout(**PLOT_LAYOUT, height=340, title=dict(text="Disclosure Score vs Climate VaR", font=dict(family="DM Serif Display", size=15, color="#e6edf3")))
+    st.plotly_chart(fig3, use_container_width=True)
 
 
-# ─── Tab 2: Scenario Analysis ─────────────────────────────────────────────────
+# ─── TAB 2: Scenarios ────────────────────────────────────────────────────────
 with tab2:
-    st.markdown(f"#### Scenario Comparison — Carbon Cost Exposure")
-    st.caption("Carbon cost exposure = carbon intensity × revenue × scenario carbon price (USD/tonne CO₂e)")
+    st.markdown('<div class="section-header">Scenario Analysis</div>', unsafe_allow_html=True)
+    st.markdown('<div class="section-sub">How does carbon cost exposure change depending on global climate policy ambition? The gap between 1.5°C and 3°C represents the financial spread of political decisions made today.</div>', unsafe_allow_html=True)
 
-    scenarios_all = {}
+    sc_dfs = []
     for sc in ["1.5C", "2C", "3C"]:
-        sc_df = scenario_analysis(df_base[df_base["sector"].isin(sectors)], sc)
+        sc_df = scenario_analysis(df_base[df_base["sector"].isin(sectors)], sc).copy()
         sc_df["scenario"] = sc
-        scenarios_all[sc] = sc_df
-
-    combined = pd.concat(scenarios_all.values())
+        sc_dfs.append(sc_df)
+    combined = pd.concat(sc_dfs)
 
     fig4 = px.bar(
-        combined,
-        x="company",
-        y="carbon_cost_exposure_usd_m",
-        color="scenario",
-        barmode="group",
-        color_discrete_map={"1.5C": "#2ecc71", "2C": "#f39c12", "3C": "#e74c3c"},
+        combined, x="company", y="carbon_cost_exposure_usd_m",
+        color="scenario", barmode="group",
+        color_discrete_map={"1.5C": "#3fb950", "2C": "#e3b341", "3C": "#f85149"},
         labels={"carbon_cost_exposure_usd_m": "Carbon Cost Exposure (USD M)", "company": ""},
-        title="Carbon Cost Exposure Across TCFD Scenarios",
     )
-    fig4.update_layout(height=420, xaxis_tickangle=-35, plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)")
-    st.plotly_chart(fig4, width="stretch")
+    fig4.update_layout(**PLOT_LAYOUT, height=400, xaxis_tickangle=-25,
+                       title=dict(text="Carbon Cost Exposure Across All Scenarios", font=dict(family="DM Serif Display", size=15, color="#e6edf3")),
+                       legend=dict(orientation="h", y=1.08, font=dict(color="#e6edf3")))
+    st.plotly_chart(fig4, use_container_width=True)
 
-    col_s1, col_s2 = st.columns(2)
-    with col_s1:
-        st.markdown("#### Scenario carbon price assumptions")
-        scenario_info = pd.DataFrame({
-            "Scenario": ["1.5C", "2C", "3C"],
-            "Carbon Price (USD/tonne)": [85, 50, 25],
-            "Physical Risk Multiplier": ["0.8×", "1.2×", "1.8×"],
-            "Transition Risk Multiplier": ["1.6×", "1.2×", "0.7×"],
+    sc1, sc2 = st.columns(2)
+    with sc1:
+        st.markdown('<div class="section-sub" style="margin-top:1rem"><b style="color:#e6edf3">What each scenario assumes</b></div>', unsafe_allow_html=True)
+        sc_table = pd.DataFrame({
+            "Scenario": ["🟢 1.5C", "🟡 2C", "🔴 3C"],
+            "Carbon Price 2030": ["$85/t", "$50/t", "$25/t"],
             "Dominant Risk": ["Transition", "Balanced", "Physical"],
+            "Kenya Implication": [
+                "Heavy carbon tax on Oil & Gas, Utilities",
+                "Both risks grow at moderate pace",
+                "Floods & drought devastate ASAL agriculture"
+            ]
         })
-        st.dataframe(scenario_info, width="stretch", hide_index=True)
+        st.dataframe(sc_table, use_container_width=True, hide_index=True)
 
-    with col_s2:
-        st.markdown("#### Stranded asset exposure")
-        stranded = df[df["stranded_asset_risk"] == "high"][["company", "sector", "carbon_intensity_tCO2e", "carbon_cost_exposure_usd_m"]]
-        if stranded.empty:
-            st.info("No high stranded asset risk companies in current filter.")
-        else:
-            st.dataframe(stranded.rename(columns={
-                "carbon_intensity_tCO2e": "Carbon Intensity",
-                "carbon_cost_exposure_usd_m": "Carbon Cost Exp. (USD M)"
-            }), width="stretch", hide_index=True)
+    with sc2:
+        stranded = df[df["stranded_asset_risk"] == "high"]
+        if not stranded.empty:
+            st.markdown('<div class="section-sub" style="margin-top:1rem"><b style="color:#e6edf3">Stranded asset exposure</b></div>', unsafe_allow_html=True)
+            st.dataframe(
+                stranded[["company","sector","carbon_intensity_tCO2e","carbon_cost_exposure_usd_m"]],
+                use_container_width=True, hide_index=True
+            )
+            st.markdown('<div class="icard icard-red">⚠️ Companies with <b>high stranded asset risk</b> hold fossil fuel infrastructure that may become uneconomic under carbon pricing — a critical flag for DFI lending decisions and green bond structuring.</div>', unsafe_allow_html=True)
 
 
-# ─── Tab 3: Climate VaR ───────────────────────────────────────────────────────
+# ─── TAB 3: Climate VaR ──────────────────────────────────────────────────────
 with tab3:
-    st.markdown("#### Climate Value-at-Risk (Monte Carlo, 10,000 simulations)")
-    st.caption("VaR 95% = revenue % at risk in 95th percentile loss scenario | CVaR = expected loss beyond VaR")
+    st.markdown('<div class="section-header">Climate Value at Risk</div>', unsafe_allow_html=True)
+    st.markdown('<div class="section-sub">How much revenue could each company lose in a severe climate event? VaR 95% = the loss exceeded only 5% of the time across 10,000 Monte Carlo simulations. CVaR = expected loss in that worst 5% tail.</div>', unsafe_allow_html=True)
 
+    df_s = df.sort_values("cvar_95", ascending=False)
     fig5 = go.Figure()
-    df_sorted = df.sort_values("cvar_95", ascending=False)
-    fig5.add_trace(go.Bar(
-        name="CVaR 95%",
-        x=df_sorted["company"],
-        y=df_sorted["cvar_95"],
-        marker_color="#e74c3c",
-        opacity=0.85,
-    ))
-    fig5.add_trace(go.Bar(
-        name="VaR 95%",
-        x=df_sorted["company"],
-        y=df_sorted["var_95"],
-        marker_color="#f39c12",
-        opacity=0.85,
-    ))
-    fig5.update_layout(
-        barmode="overlay",
-        xaxis_tickangle=-35,
-        height=400,
-        yaxis_title="% of Revenue at Risk",
-        plot_bgcolor="rgba(0,0,0,0)",
-        paper_bgcolor="rgba(0,0,0,0)",
-        legend=dict(orientation="h", y=1.1),
-    )
-    st.plotly_chart(fig5, width="stretch")
+    fig5.add_trace(go.Bar(name="CVaR 95% (tail)", x=df_s["company"], y=df_s["cvar_95"], marker_color="#f85149", opacity=0.9))
+    fig5.add_trace(go.Bar(name="VaR 95%", x=df_s["company"], y=df_s["var_95"], marker_color="#e3b341", opacity=0.9))
+    fig5.update_layout(**PLOT_LAYOUT, barmode="overlay", height=380, xaxis_tickangle=-20,
+                       yaxis_title="% Revenue at Risk",
+                       title=dict(text="Climate VaR — Ranked Worst to Best", font=dict(family="DM Serif Display", size=15, color="#e6edf3")),
+                       legend=dict(orientation="h", y=1.08, font=dict(color="#e6edf3")))
+    st.plotly_chart(fig5, use_container_width=True)
 
-    # Interactive single-company VaR
-    st.markdown("#### 🔍 Single company deep-dive")
-    selected_co = st.selectbox("Select company", df["company"].unique())
-    row = df[df["company"] == selected_co].iloc[0]
+    st.markdown('<div class="section-header" style="font-size:1.1rem">Company Deep-Dive</div>', unsafe_allow_html=True)
+    sel_co = st.selectbox("Select company", df["company"].unique(), key="var_co")
+    row = df[df["company"] == sel_co].iloc[0]
 
-    c1, c2, c3 = st.columns(3)
-    c1.metric("VaR 95%", f"{row['var_95']}%")
-    c2.metric("CVaR 95%", f"{row['cvar_95']}%")
-    c3.metric("Carbon Intensity", f"{row['carbon_intensity_tCO2e']} tCO₂e")
+    d1, d2, d3, d4 = st.columns(4)
+    for col, label, val, cls in [
+        (d1, "VaR 95%", f"{row['var_95']}%", "red"),
+        (d2, "CVaR 95%", f"{row['cvar_95']}%", "red"),
+        (d3, "Carbon Intensity", f"{row['carbon_intensity_tCO2e']:.0f} tCO₂e", "amber"),
+        (d4, "Credit Rating", row["credit_rating"], "blue"),
+    ]:
+        col.markdown(f'<div class="kpi-card kpi-{cls}"><div class="kpi-label">{label}</div><div class="kpi-value" style="font-size:1.4rem">{val}</div></div>', unsafe_allow_html=True)
 
-    # Distribution plot
-    import numpy as np
     np.random.seed(42)
     n = 10000
-    physical_shock = np.random.normal(row["physical_risk_score"] * 0.012, row["physical_risk_score"] * 0.008, n)
-    transition_shock = np.random.normal(row["transition_risk_score"] * 0.015, row["transition_risk_score"] * 0.010, n)
-    carbon_cost = (row["carbon_intensity_tCO2e"] / 500) * np.random.uniform(0.005, 0.025, n)
-    losses = np.clip(physical_shock + transition_shock + carbon_cost, 0, None) * 100
+    losses = np.clip(
+        np.random.normal(row["physical_risk_score"]*0.012, row["physical_risk_score"]*0.008, n) +
+        np.random.normal(row["transition_risk_score"]*0.015, row["transition_risk_score"]*0.010, n) +
+        (row["carbon_intensity_tCO2e"]/500)*np.random.uniform(0.005, 0.025, n), 0, None
+    ) * 100
 
     fig6 = go.Figure()
-    fig6.add_trace(go.Histogram(x=losses, nbinsx=80, name="Loss distribution", marker_color="#3498db", opacity=0.7))
-    fig6.add_vline(x=row["var_95"], line_color="#f39c12", line_dash="dash", annotation_text=f"VaR 95% = {row['var_95']}%")
-    fig6.add_vline(x=row["cvar_95"], line_color="#e74c3c", line_dash="dash", annotation_text=f"CVaR = {row['cvar_95']}%")
-    fig6.update_layout(
-        title=f"Loss Distribution — {selected_co}",
-        xaxis_title="% Revenue Loss",
-        yaxis_title="Frequency",
-        height=340,
-        plot_bgcolor="rgba(0,0,0,0)",
-        paper_bgcolor="rgba(0,0,0,0)",
-    )
-    st.plotly_chart(fig6, width="stretch")
+    fig6.add_trace(go.Histogram(x=losses, nbinsx=80, marker_color="#58a6ff", opacity=0.7, name="Simulated losses"))
+    fig6.add_vline(x=row["var_95"], line_color="#e3b341", line_dash="dash", annotation_text=f"VaR {row['var_95']}%", annotation_font_color="#e3b341")
+    fig6.add_vline(x=row["cvar_95"], line_color="#f85149", line_dash="dash", annotation_text=f"CVaR {row['cvar_95']}%", annotation_font_color="#f85149")
+    fig6.update_layout(**PLOT_LAYOUT, height=300,
+                       title=dict(text=f"10,000-Scenario Loss Distribution — {sel_co}", font=dict(family="DM Serif Display", size=14, color="#e6edf3")),
+                       xaxis_title="% Revenue Loss", yaxis_title="Frequency", showlegend=False)
+    st.plotly_chart(fig6, use_container_width=True)
 
-
-# ─── Tab 4: Forecast 2025–2030 ───────────────────────────────────────────────
-with tab4:
-    st.markdown("#### 🔮 Climate Risk Forecast — 2025 to 2030")
-    st.caption(
-        "Forward-looking projections per company under each TCFD scenario. "
-        "Includes carbon intensity trajectory, risk score evolution, "
-        "Climate VaR trend, transition pathway classification, and early warning tipping points."
-    )
-
-    col_fc1, col_fc2 = st.columns([1, 2])
-    with col_fc1:
-        forecast_company = st.selectbox(
-            "Select company", sorted(df["company"].unique()), key="fc_company"
-        )
-        forecast_scenario = st.selectbox(
-            "Forecast scenario", ["1.5C", "2C", "3C"], index=1, key="fc_scenario"
-        )
-
-    company_row = df[df["company"] == forecast_company].iloc[0].to_dict()
-
-    with st.spinner("Running forecast model..."):
-        fc = run_all_forecasts(company_row, forecast_scenario)
-
-    with col_fc2:
-        pw_color = {"🟢 Early Mover": "#27ae60", "🔵 On Track": "#3498db",
-                    "🟡 Laggard": "#f39c12", "🔴 Stranded Risk": "#e74c3c"}
-        color = pw_color.get(fc["pathway"], "#888")
-        st.markdown(
-            f"<div style='background:rgba(0,0,0,0.05);border-left:4px solid {color};"
-            f"padding:12px 16px;border-radius:6px;margin-top:8px'>"
-            f"<b>Transition Pathway:</b> {fc['pathway']}<br>"
-            f"<b>Pathway Score:</b> {fc['pathway_score']} / 100<br>"
-            f"<b>Scenario:</b> {forecast_scenario} · "
-            f"<b>Company:</b> {forecast_company}"
-            f"</div>",
-            unsafe_allow_html=True,
-        )
-
-    st.divider()
-
-    # ── Early warning tipping points ──────────────────────────────────────────
-    if fc["tipping_points"]:
-        st.markdown("#### ⚠️ Early Warning — Tipping Points Detected")
-        for tp in fc["tipping_points"]:
-            st.warning(
-                f"**{tp['type']}** — crosses threshold in **{tp['year']}**  \n"
-                f"Score: {tp['value']:.2f} (threshold: {tp['threshold']})  \n"
-                f"*{tp['implication']}*"
-            )
+    if row["var_95"] > 8:
+        st.markdown(f'<div class="icard icard-red">🔴 <b>Critical</b> — {sel_co} faces severe climate-driven revenue loss. Immediate board-level attention and transition strategy required.</div>', unsafe_allow_html=True)
+    elif row["var_95"] > 5:
+        st.markdown(f'<div class="icard icard-amber">🟡 <b>Elevated</b> — {sel_co} has meaningful climate exposure. Active risk management and green capex investment recommended.</div>', unsafe_allow_html=True)
     else:
-        st.success(
-            f"✅ No critical tipping points detected for {forecast_company} "
-            f"under the {forecast_scenario} scenario through 2030."
-        )
-
-    st.divider()
-
-    # ── Charts row 1: Carbon intensity + Composite risk ───────────────────────
-    c1, c2 = st.columns(2)
-
-    with c1:
-        st.markdown("**Carbon Intensity Trajectory (tCO₂e / USD M revenue)**")
-        ci = fc["carbon"]
-        fig_fc1 = go.Figure()
-        fig_fc1.add_trace(go.Scatter(
-            x=ci["year"], y=ci["upper_bound"],
-            mode="lines", line=dict(width=0),
-            showlegend=False, name="Upper bound"
-        ))
-        fig_fc1.add_trace(go.Scatter(
-            x=ci["year"], y=ci["lower_bound"],
-            fill="tonexty",
-            fillcolor="rgba(52,152,219,0.15)",
-            mode="lines", line=dict(width=0),
-            name="Uncertainty band"
-        ))
-        fig_fc1.add_trace(go.Scatter(
-            x=ci["year"], y=ci["carbon_intensity"],
-            mode="lines+markers",
-            line=dict(color="#3498db", width=2.5),
-            marker=dict(size=7),
-            name="Carbon intensity",
-        ))
-        # Add 2023 baseline
-        fig_fc1.add_hline(
-            y=company_row.get("carbon_intensity_tCO2e", 100),
-            line_dash="dash", line_color="gray", opacity=0.5,
-            annotation_text="2023 baseline",
-        )
-        fig_fc1.update_layout(
-            height=340, xaxis_title="Year",
-            yaxis_title="tCO₂e / USD M revenue",
-            plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
-            legend=dict(orientation="h", y=-0.2),
-        )
-        st.plotly_chart(fig_fc1, width="stretch")
-
-    with c2:
-        st.markdown("**Composite Climate Risk Score (0–10)**")
-        rk = fc["risk"]
-        fig_fc2 = go.Figure()
-        fig_fc2.add_trace(go.Scatter(
-            x=rk["year"], y=rk["physical_risk"],
-            mode="lines+markers", name="Physical Risk",
-            line=dict(color="#e67e22", width=2), marker=dict(size=6),
-        ))
-        fig_fc2.add_trace(go.Scatter(
-            x=rk["year"], y=rk["transition_risk"],
-            mode="lines+markers", name="Transition Risk",
-            line=dict(color="#8e44ad", width=2), marker=dict(size=6),
-        ))
-        fig_fc2.add_trace(go.Scatter(
-            x=rk["year"], y=rk["composite_risk"],
-            mode="lines+markers", name="Composite Risk",
-            line=dict(color="#e74c3c", width=3, dash="dot"), marker=dict(size=8),
-        ))
-        fig_fc2.add_hline(y=7.5, line_dash="dash", line_color="red",
-                          opacity=0.4, annotation_text="High risk threshold")
-        fig_fc2.update_layout(
-            height=340, xaxis_title="Year", yaxis=dict(range=[0, 11]),
-            plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
-            legend=dict(orientation="h", y=-0.2),
-        )
-        st.plotly_chart(fig_fc2, width="stretch")
-
-    # ── Charts row 2: Climate VaR trend + Carbon cost path ────────────────────
-    c3, c4 = st.columns(2)
-
-    with c3:
-        st.markdown("**Climate VaR Trend (% revenue at risk)**")
-        vr = fc["var"]
-        fig_fc3 = go.Figure()
-        fig_fc3.add_trace(go.Scatter(
-            x=vr["year"], y=vr["cvar_95"],
-            fill="tozeroy", fillcolor="rgba(231,76,60,0.12)",
-            mode="lines+markers", name="CVaR 95%",
-            line=dict(color="#e74c3c", width=2.5), marker=dict(size=7),
-        ))
-        fig_fc3.add_trace(go.Scatter(
-            x=vr["year"], y=vr["var_95"],
-            mode="lines+markers", name="VaR 95%",
-            line=dict(color="#f39c12", width=2), marker=dict(size=6),
-        ))
-        fig_fc3.add_trace(go.Scatter(
-            x=vr["year"], y=vr["median_loss"],
-            mode="lines", name="Median loss",
-            line=dict(color="#95a5a6", width=1.5, dash="dot"),
-        ))
-        fig_fc3.update_layout(
-            height=340, xaxis_title="Year",
-            yaxis_title="% Revenue at Risk",
-            plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
-            legend=dict(orientation="h", y=-0.2),
-        )
-        st.plotly_chart(fig_fc3, width="stretch")
-
-    with c4:
-        st.markdown("**Carbon Cost Exposure Path (USD M)**")
-        fig_fc4 = go.Figure()
-        fig_fc4.add_trace(go.Bar(
-            x=rk["year"], y=rk["carbon_cost_usd_m"],
-            marker_color=rk["carbon_cost_usd_m"],
-            marker_colorscale="YlOrRd",
-            name="Carbon cost",
-            text=rk["carbon_price"].apply(lambda p: f"${p}/t"),
-            textposition="outside",
-        ))
-        fig_fc4.update_layout(
-            height=340, xaxis_title="Year",
-            yaxis_title="Carbon Cost (USD M)",
-            plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
-            showlegend=False,
-        )
-        st.plotly_chart(fig_fc4, width="stretch")
-
-    # ── Multi-company comparison ───────────────────────────────────────────────
-    st.divider()
-    st.markdown("#### 📊 Portfolio-Level Forecast Comparison")
-    st.caption("Compare transition pathways and 2030 composite risk across all companies")
-
-    all_pathways = []
-    for _, row in df.iterrows():
-        row_dict = row.to_dict()
-        fc_all = run_all_forecasts(row_dict, forecast_scenario)
-        risk_2030 = fc_all["risk"].iloc[-1]
-        var_2030 = fc_all["var"].iloc[-1]
-        all_pathways.append({
-            "Company": row["company"],
-            "Sector": row["sector"],
-            "Pathway": fc_all["pathway"],
-            "Pathway Score": fc_all["pathway_score"],
-            "2030 Composite Risk": risk_2030["composite_risk"],
-            "2030 Physical Risk": risk_2030["physical_risk"],
-            "2030 Transition Risk": risk_2030["transition_risk"],
-            "2030 CVaR 95%": var_2030["cvar_95"],
-            "2030 Carbon Cost (USD M)": risk_2030["carbon_cost_usd_m"],
-            "Tipping Points": len(fc_all["tipping_points"]),
-        })
-
-    pathway_df = pd.DataFrame(all_pathways).sort_values("2030 Composite Risk", ascending=False)
-
-    fig_fc5 = px.bar(
-        pathway_df,
-        x="Company", y="2030 Composite Risk",
-        color="Pathway",
-        color_discrete_map={
-            "🟢 Early Mover": "#27ae60",
-            "🔵 On Track": "#3498db",
-            "🟡 Laggard": "#f39c12",
-            "🔴 Stranded Risk": "#e74c3c",
-        },
-        hover_data=["Sector", "Pathway Score", "2030 CVaR 95%", "Tipping Points"],
-        title=f"2030 Composite Risk by Transition Pathway — {forecast_scenario} Scenario",
-        labels={"2030 Composite Risk": "Composite Risk Score (0-10)", "Company": ""},
-    )
-    fig_fc5.add_hline(y=7.5, line_dash="dash", line_color="red",
-                      opacity=0.4, annotation_text="High risk threshold")
-    fig_fc5.update_layout(
-        height=400, xaxis_tickangle=-25,
-        plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
-        legend=dict(orientation="h", y=1.12),
-    )
-    st.plotly_chart(fig_fc5, width="stretch")
-
-    st.dataframe(
-        pathway_df.style.apply(
-            lambda col: [
-                "color: #e74c3c" if "Stranded" in str(v)
-                else "color: #f39c12" if "Laggard" in str(v)
-                else "color: #27ae60" if "Early" in str(v)
-                else "" for v in col
-            ] if col.name == "Pathway" else [""] * len(col),
-            axis=0
-        ),
-        width="stretch", hide_index=True
-    )
-
-    csv_fc = pathway_df.to_csv(index=False).encode("utf-8")
-    st.download_button(
-        "⬇️ Download 2030 Forecast Report",
-        csv_fc, "climate_risk_forecast_2030.csv", "text/csv"
-    )
+        st.markdown(f'<div class="icard icard-green">🟢 <b>Manageable</b> — {sel_co} climate VaR is within normal tolerance. Focus on disclosure improvement to access green finance.</div>', unsafe_allow_html=True)
 
 
-# ─── Tab 5: Data Table ────────────────────────────────────────────────────────
+# ─── TAB 4: Forecast ─────────────────────────────────────────────────────────
+with tab4:
+    st.markdown('<div class="section-header">2025–2030 Forecast</div>', unsafe_allow_html=True)
+    st.markdown('<div class="section-sub">Forward projections under TCFD scenario trajectories. Carbon intensity decline adjusted per company based on TCFD score, green revenue %, and transition capex. Tipping points show when critical thresholds are breached.</div>', unsafe_allow_html=True)
+
+    fc1, fc2 = st.columns([1, 2])
+    with fc1:
+        fc_co = st.selectbox("Company", sorted(df["company"].unique()), key="fc_co2")
+        fc_sc = st.selectbox("Scenario", ["1.5C", "2C", "3C"], index=1, key="fc_sc2")
+    co_row = df[df["company"] == fc_co].iloc[0].to_dict()
+    with st.spinner(""):
+        fc = run_all_forecasts(co_row, fc_sc)
+
+    pw_colors = {"🟢 Early Mover": "#3fb950", "🔵 On Track": "#58a6ff", "🟡 Laggard": "#e3b341", "🔴 Stranded Risk": "#f85149"}
+    pw_c = pw_colors.get(fc["pathway"], "#8b949e")
+    with fc2:
+        st.markdown(f'<div class="pathway-strip"><div><div class="pathway-label">Transition Pathway</div><div class="pathway-value" style="color:{pw_c}">{fc["pathway"]}</div></div><div><div class="pathway-label">Pathway Score</div><div class="pathway-value">{fc["pathway_score"]}<span style="font-size:0.9rem;color:var(--muted)">/100</span></div></div><div style="font-size:0.78rem;color:var(--muted);max-width:300px">Scored on TCFD disclosure quality, green revenue share, and transition capex intensity.</div></div>', unsafe_allow_html=True)
+
+    if fc["tipping_points"]:
+        st.markdown('<div class="section-sub" style="color:#f85149"><b>⚠️ Tipping Points Detected — act before these years</b></div>', unsafe_allow_html=True)
+        for tp in fc["tipping_points"]:
+            st.markdown(f'<div class="icard icard-red"><b>{tp["type"]}</b> — breaches threshold in <b>{tp["year"]}</b> &nbsp;·&nbsp; score reaches {tp["value"]:.2f} (limit: {tp["threshold"]})<br><small>{tp["implication"]}</small></div>', unsafe_allow_html=True)
+    else:
+        st.markdown(f'<div class="icard icard-green">✅ No critical tipping points for <b>{fc_co}</b> under {fc_sc} through 2030.</div>', unsafe_allow_html=True)
+
+    p1, p2 = st.columns(2)
+    ci, rk = fc["carbon"], fc["risk"]
+    with p1:
+        f1 = go.Figure()
+        f1.add_trace(go.Scatter(x=ci["year"], y=ci["upper_bound"], mode="lines", line=dict(width=0), showlegend=False))
+        f1.add_trace(go.Scatter(x=ci["year"], y=ci["lower_bound"], fill="tonexty", fillcolor="rgba(88,166,255,0.1)", mode="lines", line=dict(width=0), name="Uncertainty"))
+        f1.add_trace(go.Scatter(x=ci["year"], y=ci["carbon_intensity"], mode="lines+markers", line=dict(color="#58a6ff", width=2.5), marker=dict(size=7), name="Projection"))
+        f1.add_hline(y=co_row.get("carbon_intensity_tCO2e",100), line_dash="dash", line_color="#8b949e", opacity=0.5, annotation_text="2023 baseline", annotation_font_color="#8b949e")
+        f1.update_layout(**PLOT_LAYOUT, height=300, title=dict(text="Carbon Intensity to 2030", font=dict(family="DM Serif Display", size=14, color="#e6edf3")), yaxis_title="tCO₂e / USD M rev")
+        st.plotly_chart(f1, use_container_width=True)
+    with p2:
+        f2 = go.Figure()
+        f2.add_trace(go.Scatter(x=rk["year"], y=rk["physical_risk"], mode="lines+markers", name="Physical", line=dict(color="#e3b341", width=2)))
+        f2.add_trace(go.Scatter(x=rk["year"], y=rk["transition_risk"], mode="lines+markers", name="Transition", line=dict(color="#bc8cff", width=2)))
+        f2.add_trace(go.Scatter(x=rk["year"], y=rk["composite_risk"], mode="lines+markers", name="Composite", line=dict(color="#f85149", width=3, dash="dot")))
+        f2.add_hline(y=7.5, line_dash="dash", line_color="#f85149", opacity=0.3, annotation_text="High threshold")
+        f2.update_layout(**PLOT_LAYOUT, height=300, yaxis=dict(range=[0,11], gridcolor="#21262d"),
+                         title=dict(text="Risk Score Trajectory", font=dict(family="DM Serif Display", size=14, color="#e6edf3")),
+                         legend=dict(orientation="h", y=-0.2, font=dict(color="#e6edf3")))
+        st.plotly_chart(f2, use_container_width=True)
+
+    st.markdown('<div class="section-header" style="font-size:1.1rem;margin-top:2rem">Portfolio — Who is best positioned for 2030?</div>', unsafe_allow_html=True)
+    pw_rows = []
+    for _, r in df.iterrows():
+        fc_r = run_all_forecasts(r.to_dict(), fc_sc)
+        r30 = fc_r["risk"].iloc[-1]
+        pw_rows.append({"Company": r["company"], "Sector": r["sector"],
+                        "Pathway": fc_r["pathway"], "Score": fc_r["pathway_score"],
+                        "2030 Risk": r30["composite_risk"],
+                        "2030 CVaR": fc_r["var"].iloc[-1]["cvar_95"],
+                        "Tipping Points": len(fc_r["tipping_points"])})
+    pw_df = pd.DataFrame(pw_rows).sort_values("2030 Risk", ascending=False)
+    f3 = px.bar(pw_df, x="Company", y="2030 Risk", color="Pathway",
+                color_discrete_map=pw_colors,
+                hover_data=["Sector","Score","2030 CVaR","Tipping Points"],
+                labels={"2030 Risk": "Composite Risk (0–10)", "Company": ""})
+    f3.add_hline(y=7.5, line_dash="dash", line_color="#f85149", opacity=0.3)
+    f3.update_layout(**PLOT_LAYOUT, height=360, xaxis_tickangle=-20,
+                     title=dict(text=f"2030 Portfolio Risk — {fc_sc} Scenario", font=dict(family="DM Serif Display", size=14, color="#e6edf3")),
+                     legend=dict(orientation="h", y=1.1, font=dict(color="#e6edf3")))
+    st.plotly_chart(f3, use_container_width=True)
+
+
+# ─── TAB 5: Geo Map ──────────────────────────────────────────────────────────
 with tab5:
-    st.markdown("#### Full dataset")
-    display_cols = [
-        "company", "sector", "risk_category", "carbon_intensity_tCO2e",
-        "physical_risk_score", "transition_risk_score",
-        "adj_physical_risk", "adj_transition_risk",
-        "var_95", "cvar_95", "carbon_cost_exposure_usd_m",
-        "tcfd_disclosure_score", "green_revenue_pct", "credit_rating"
-    ]
+    st.markdown('<div class="section-header">Geospatial Risk Map</div>', unsafe_allow_html=True)
+    st.markdown('<div class="section-sub">Climate risk is geographic. Each marker shows a company\'s primary operational county — bubble size = revenue. This is where Planetek Italia\'s satellite data feeds directly into the model, replacing estimated risk scores with live earth observation.</div>', unsafe_allow_html=True)
+
+    LOCS = {
+        "Safaricom": (-1.2921, 36.8219), "KenGen": (-0.3031, 36.08),
+        "Equity Bank": (-1.2921, 36.82), "EABL": (-1.32, 36.81),
+        "Nation Media": (-1.28, 36.83), "Bamburi Cement": (-4.02, 39.65),
+        "KCB Group": (-1.275, 36.815), "KPLC": (-1.30, 36.80),
+        "TotalEnergies Kenya": (-4.06, 39.67), "Britam": (-1.29, 36.825),
+        "Co-op Bank": (-1.285, 36.82), "Mumias Sugar": (0.333, 34.483),
+        "ARM Cement": (-1.31, 36.805),
+    }
+    map_rows = []
+    for _, row in df.iterrows():
+        lat, lon = LOCS.get(row["company"], (-1.29, 36.82))
+        map_rows.append({
+            "company": row["company"], "sector": row["sector"],
+            "risk": row["risk_category"], "var_95": row["var_95"],
+            "carbon": row["carbon_intensity_tCO2e"],
+            "tcfd": row["tcfd_disclosure_score"],
+            "rating": row["credit_rating"],
+            "lat": lat + np.random.uniform(-0.05, 0.05),
+            "lon": lon + np.random.uniform(-0.05, 0.05),
+            "size": row["revenue_usd_millions"],
+        })
+    map_df = pd.DataFrame(map_rows)
+    fig_map = px.scatter_mapbox(
+        map_df, lat="lat", lon="lon", color="risk", size="size",
+        hover_name="company",
+        hover_data={"sector": True, "var_95": True, "carbon": True, "tcfd": True, "rating": True, "lat": False, "lon": False, "size": False},
+        color_discrete_map=COLOR_RISK,
+        mapbox_style="carto-darkmatter",
+        zoom=5.5, center={"lat": -0.5, "lon": 37.5}, size_max=45,
+    )
+    fig_map.update_layout(paper_bgcolor="#0d1117", height=500, margin={"r":0,"t":0,"l":0,"b":0},
+                          legend=dict(font=dict(color="#e6edf3"), bgcolor="rgba(0,0,0,0)"))
+    st.plotly_chart(fig_map, use_container_width=True)
+
+    g1, g2, g3 = st.columns(3)
+    with g1:
+        st.markdown('<div class="icard icard-amber">🌵 <b>Drought Index (Planetek)</b><br>NDVI-derived drought stress per county replaces estimated physical risk scores — making Turkana, Garissa, and Marsabit risks precisely quantified rather than approximated.</div>', unsafe_allow_html=True)
+    with g2:
+        st.markdown('<div class="icard icard-blue">🌊 <b>Flood Mapping (Sentinel-1 SAR)</b><br>Real-time flood inundation updates KPLC, Bamburi, and coastal company risk scores after each major rainfall event — enabling dynamic risk repricing.</div>', unsafe_allow_html=True)
+    with g3:
+        st.markdown('<div class="icard icard-green">🌳 <b>Land Change (Hansen GFC)</b><br>Annual forest cover loss feeds carbon credit valuation for companies with land assets in Mau, Aberdares, and coastal forests — directly monetisable via REDD+.</div>', unsafe_allow_html=True)
+
+    st.markdown('<div class="icard icard-gold" style="margin-top:0.5rem">🤖 <b>AI + Geospatial = The SmartHaven × Planetek Value Chain</b><br>Connecting Planetek\'s satellite APIs enables: (1) automatic risk score updates after each satellite pass, (2) county-level carbon credit valuation using verified land measurements, (3) flood early warnings triggering insurance payout thresholds for agricultural lenders. This bridges earth observation data directly to bankable climate finance instruments.</div>', unsafe_allow_html=True)
+
+
+# ─── TAB 6: AI Insights ──────────────────────────────────────────────────────
+with tab6:
+    st.markdown('<div class="section-header">AI-Powered Analysis</div>', unsafe_allow_html=True)
+    st.markdown('<div class="section-sub">Claude reads your filtered dashboard data and generates a structured intelligence report — key risk flags, sector outlook, what satellite data would change, and specific investor actions. Updates with every scenario/filter change.</div>', unsafe_allow_html=True)
+
+    st.markdown('<div class="icard icard-blue">Change the scenario or sector filters in the sidebar, then click Generate to get a fresh analysis focused on your selected slice of the portfolio.</div>', unsafe_allow_html=True)
+    run_ai = st.button("🤖 Generate AI Analysis", type="primary", use_container_width=False)
+
+    if run_ai:
+        with st.spinner("Claude is analysing..."):
+            from models.ai_insights import build_analysis_prompt, compute_sector_stats, generate_insights_sync
+            prompt = build_analysis_prompt(df, scenario, df.nlargest(8, "var_95"), compute_sector_stats(df))
+            result = generate_insights_sync(prompt)
+
+        if "error" in result:
+            st.error(f"API error: {result['error']}")
+        else:
+            st.markdown(f'<div class="summary-banner"><div class="summary-label">📋 Executive Summary</div>{result.get("executive_summary","")}</div>', unsafe_allow_html=True)
+
+            st.markdown('<div class="section-header" style="font-size:1.1rem">🚨 Top Risk Flags</div>', unsafe_allow_html=True)
+            urgency_cls = {"Immediate": "red", "2026": "red", "2027": "amber", "2028": "amber", "2030": "blue"}
+            for r in result.get("top_3_risks", []):
+                cls = urgency_cls.get(r.get("urgency",""), "amber")
+                st.markdown(f'<div class="icard icard-{cls}"><b>{r.get("risk","")}</b> — {r.get("company_or_sector","")} <span style="float:right;font-family:var(--mono);font-size:0.7rem;opacity:0.7">⏰ {r.get("urgency","")}</span><br>{r.get("detail","")}</div>', unsafe_allow_html=True)
+
+            st.markdown('<div class="section-header" style="font-size:1.1rem">🏭 Sector Outlook</div>', unsafe_allow_html=True)
+            oc = st.columns(min(len(result.get("sector_outlook",[])), 4))
+            for i, s in enumerate(result.get("sector_outlook",[])):
+                ocls = {"Positive":"green","Cautious":"amber","Negative":"red"}.get(s.get("outlook",""),"amber")
+                oc[i%4].markdown(f'<div class="icard icard-{ocls}"><b>{s.get("sector","")}</b><br>{s.get("outlook","")} · <small>{s.get("reasoning","")}</small></div>', unsafe_allow_html=True)
+
+            st.markdown('<div class="section-header" style="font-size:1.1rem">🛰️ What Satellite Data Would Change</div>', unsafe_allow_html=True)
+            st.markdown(f'<div class="icard icard-blue">{result.get("satellite_data_gaps","")}</div>', unsafe_allow_html=True)
+
+            st.markdown('<div class="section-header" style="font-size:1.1rem">💼 Investor Actions</div>', unsafe_allow_html=True)
+            for i, a in enumerate(result.get("investor_actions",[]), 1):
+                st.markdown(f'<div class="icard icard-green"><b>{i}.</b> {a}</div>', unsafe_allow_html=True)
+
+            st.markdown('<div class="section-header" style="font-size:1.1rem">🇰🇪 Kenya-Specific Insight</div>', unsafe_allow_html=True)
+            st.markdown(f'<div class="icard icard-gold">{result.get("kenya_specific_insight","")}</div>', unsafe_allow_html=True)
+    else:
+        st.markdown('<div class="icard icard-blue" style="text-align:center;padding:2rem">👆 Click <b>Generate AI Analysis</b> to run the intelligence report</div>', unsafe_allow_html=True)
+
+
+# ─── TAB 7: Data ─────────────────────────────────────────────────────────────
+with tab7:
+    st.markdown('<div class="section-header">Full Dataset</div>', unsafe_allow_html=True)
+    display_cols = ["company","sector","risk_category","carbon_intensity_tCO2e",
+                    "physical_risk_score","transition_risk_score","adj_physical_risk","adj_transition_risk",
+                    "var_95","cvar_95","carbon_cost_exposure_usd_m","tcfd_disclosure_score","green_revenue_pct","credit_rating"]
     st.dataframe(
         df[display_cols].rename(columns={
-            "carbon_intensity_tCO2e": "Carbon Intensity",
-            "physical_risk_score": "Physical Risk",
-            "transition_risk_score": "Transition Risk",
-            "adj_physical_risk": f"Adj Physical ({scenario})",
-            "adj_transition_risk": f"Adj Transition ({scenario})",
-            "var_95": "VaR 95%",
-            "cvar_95": "CVaR 95%",
-            "carbon_cost_exposure_usd_m": "Carbon Cost (USD M)",
-            "tcfd_disclosure_score": "TCFD Score",
-            "green_revenue_pct": "Green Rev %",
-            "credit_rating": "Rating",
+            "carbon_intensity_tCO2e":"Carbon Intensity","physical_risk_score":"Physical Risk",
+            "transition_risk_score":"Transition Risk",
+            "adj_physical_risk":f"Adj Physical ({scenario})","adj_transition_risk":f"Adj Transition ({scenario})",
+            "var_95":"VaR 95%","cvar_95":"CVaR 95%","carbon_cost_exposure_usd_m":"Carbon Cost (USD M)",
+            "tcfd_disclosure_score":"TCFD Score","green_revenue_pct":"Green Rev %","credit_rating":"Rating",
         }),
-        width="stretch",
-        hide_index=True,
+        use_container_width=True, hide_index=True,
     )
-
-    csv_export = df[display_cols].to_csv(index=False).encode("utf-8")
-    st.download_button("⬇️ Download CSV", csv_export, "tcfd_climate_risk_export.csv", "text/csv")
+    st.download_button("⬇️ Download CSV", df[display_cols].to_csv(index=False).encode("utf-8"),
+                       "tcfd_climate_risk.csv", "text/csv")
 
 # ── Footer ────────────────────────────────────────────────────────────────────
-st.divider()
-st.caption("SmartHaven Digital · TCFD Climate Risk Model P02 · Built with Python, Streamlit, Plotly · Faith Ndinda")
-
+st.markdown("""
+<div style="margin-top:3rem;padding:1.5rem 0;border-top:1px solid #30363d;display:flex;justify-content:space-between;align-items:center">
+  <div style="font-family:'JetBrains Mono',monospace;font-size:0.7rem;color:#8b949e">
+    SmartHaven Digital &nbsp;·&nbsp; TCFD Climate Risk Intelligence Platform P02 &nbsp;·&nbsp; Faith Ndinda, Nairobi
+  </div>
+  <div style="display:flex;gap:0.8rem">
+    <span style="font-family:'JetBrains Mono',monospace;font-size:0.65rem;color:#8b949e">Python</span>
+    <span style="font-family:'JetBrains Mono',monospace;font-size:0.65rem;color:#8b949e">Streamlit</span>
+    <span style="font-family:'JetBrains Mono',monospace;font-size:0.65rem;color:#8b949e">Plotly</span>
+    <span style="font-family:'JetBrains Mono',monospace;font-size:0.65rem;color:#8b949e">Claude AI</span>
+  </div>
+</div>
+""", unsafe_allow_html=True)
