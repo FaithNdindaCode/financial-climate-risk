@@ -413,11 +413,12 @@ st.markdown(f"""
 PLOT_LAYOUT = dict(
     plot_bgcolor="#161b22",
     paper_bgcolor="#161b22",
-    font=dict(family="DM Sans", color="#8b949e", size=11),
     xaxis=dict(gridcolor="#21262d", linecolor="#30363d", tickcolor="#30363d"),
     yaxis=dict(gridcolor="#21262d", linecolor="#30363d", tickcolor="#30363d"),
     margin=dict(t=40, b=20, l=10, r=10),
 )
+# Default font applied separately to avoid duplicate-key conflict with per-chart title fonts
+_FONT_DEFAULT = dict(family="DM Sans", color="#8b949e", size=11)
 
 COLOR_RISK = {"🔴 High": "#f85149", "🟡 Medium": "#e3b341", "🟢 Low": "#3fb950"}
 
@@ -446,7 +447,7 @@ with tab1:
         )
         fig1.add_hline(y=7.5, line_dash="dash", line_color="#f85149", opacity=0.4, annotation_text="High transition threshold", annotation_font_color="#f85149")
         fig1.add_vline(x=7.5, line_dash="dash", line_color="#e3b341", opacity=0.4, annotation_text="High physical threshold", annotation_font_color="#e3b341")
-        fig1.update_layout(**PLOT_LAYOUT, height=400, title=dict(text="Risk Matrix", font=dict(family="DM Serif Display", size=15, color="#e6edf3")))
+        fig1.update_layout(**PLOT_LAYOUT, font=_FONT_DEFAULT, height=400, title=dict(text="Risk Matrix", font=dict(family="DM Serif Display", size=15, color="#e6edf3")))
         st.plotly_chart(fig1, use_container_width=True)
 
     with cb:
@@ -457,7 +458,7 @@ with tab1:
             color_continuous_scale=[[0,"#3fb950"],[0.5,"#e3b341"],[1,"#f85149"]],
             labels={"carbon_intensity_tCO2e": "tCO₂e / USD M revenue", "company": ""},
         )
-        fig2.update_layout(**PLOT_LAYOUT, height=400, coloraxis_showscale=False,
+        fig2.update_layout(**PLOT_LAYOUT, font=_FONT_DEFAULT, height=400, coloraxis_showscale=False,
                            title=dict(text="Carbon Intensity Ranking", font=dict(family="DM Serif Display", size=15, color="#e6edf3")))
         st.plotly_chart(fig2, use_container_width=True)
 
@@ -481,8 +482,35 @@ with tab1:
         labels={"tcfd_disclosure_score": "TCFD Disclosure Score (0–100)", "var_95": "Climate VaR 95% (% revenue)"},
         color_discrete_sequence=["#d4a853","#3fb950","#58a6ff","#f85149","#e3b341","#bc8cff","#39d353","#ffa657","#ff7b72"],
     )
-    fig3.update_layout(**PLOT_LAYOUT, height=340, title=dict(text="Disclosure Score vs Climate VaR", font=dict(family="DM Serif Display", size=15, color="#e6edf3")))
+    fig3.update_layout(**PLOT_LAYOUT, font=_FONT_DEFAULT, height=340, title=dict(text="Disclosure Score vs Climate VaR", font=dict(family="DM Serif Display", size=15, color="#e6edf3")))
     st.plotly_chart(fig3, use_container_width=True)
+
+    # ── Treemap ───────────────────────────────────────────────────────────────
+    st.markdown('<div class="section-header" style="font-size:1.1rem">Portfolio Risk Composition</div>', unsafe_allow_html=True)
+    st.markdown('<div class="section-sub">Proportional view — box size = carbon cost exposure, color = Climate VaR. Instantly shows which companies and sectors dominate the risk landscape.</div>', unsafe_allow_html=True)
+    df_tree = df.copy()
+    df_tree["carbon_cost_exposure_usd_m"] = df_tree["carbon_cost_exposure_usd_m"].clip(lower=0.1)
+    fig_tree = px.treemap(
+        df_tree,
+        path=[px.Constant("NSE Portfolio"), "sector", "company"],
+        values="carbon_cost_exposure_usd_m",
+        color="var_95",
+        color_continuous_scale=[[0,"#3fb950"],[0.4,"#e3b341"],[1,"#f85149"]],
+        hover_data={"carbon_intensity_tCO2e": True, "tcfd_disclosure_score": True, "credit_rating": True},
+    )
+    fig_tree.update_traces(
+        texttemplate="<b>%{label}</b><br>VaR: %{color:.1f}%",
+        hovertemplate="<b>%{label}</b><br>Carbon Cost: USD %{value:.1f}M<br>Climate VaR: %{color:.1f}%<extra></extra>",
+        textfont=dict(family="DM Sans", size=12),
+        marker=dict(line=dict(width=2, color="#0d1117")),
+    )
+    fig_tree.update_layout(
+        **PLOT_LAYOUT, font=_FONT_DEFAULT, height=480,
+        coloraxis_colorbar=dict(title=dict(text="VaR 95%", font=dict(color="#8b949e")), tickfont=dict(color="#8b949e")),
+        title=dict(text="Carbon Cost Exposure Treemap — size = exposure, color = Climate VaR", font=dict(family="DM Serif Display", size=15, color="#e6edf3")),
+    )
+    st.plotly_chart(fig_tree, use_container_width=True)
+    st.markdown('<div class="icard icard-gold">💡 <b>How to read this</b> — larger boxes = more carbon cost exposure. Redder boxes = higher revenue loss under a climate shock. The worst companies appear both large <em>and</em> red.</div>', unsafe_allow_html=True)
 
 
 # ─── TAB 2: Scenarios ────────────────────────────────────────────────────────
@@ -503,7 +531,7 @@ with tab2:
         color_discrete_map={"1.5C": "#3fb950", "2C": "#e3b341", "3C": "#f85149"},
         labels={"carbon_cost_exposure_usd_m": "Carbon Cost Exposure (USD M)", "company": ""},
     )
-    fig4.update_layout(**PLOT_LAYOUT, height=400, xaxis_tickangle=-25,
+    fig4.update_layout(**PLOT_LAYOUT, font=_FONT_DEFAULT, height=400, xaxis_tickangle=-25,
                        title=dict(text="Carbon Cost Exposure Across All Scenarios", font=dict(family="DM Serif Display", size=15, color="#e6edf3")),
                        legend=dict(orientation="h", y=1.08, font=dict(color="#e6edf3")))
     st.plotly_chart(fig4, use_container_width=True)
@@ -543,7 +571,7 @@ with tab3:
     fig5 = go.Figure()
     fig5.add_trace(go.Bar(name="CVaR 95% (tail)", x=df_s["company"], y=df_s["cvar_95"], marker_color="#f85149", opacity=0.9))
     fig5.add_trace(go.Bar(name="VaR 95%", x=df_s["company"], y=df_s["var_95"], marker_color="#e3b341", opacity=0.9))
-    fig5.update_layout(**PLOT_LAYOUT, barmode="overlay", height=380, xaxis_tickangle=-20,
+    fig5.update_layout(**PLOT_LAYOUT, font=_FONT_DEFAULT, barmode="overlay", height=380, xaxis_tickangle=-20,
                        yaxis_title="% Revenue at Risk",
                        title=dict(text="Climate VaR — Ranked Worst to Best", font=dict(family="DM Serif Display", size=15, color="#e6edf3")),
                        legend=dict(orientation="h", y=1.08, font=dict(color="#e6edf3")))
@@ -574,7 +602,7 @@ with tab3:
     fig6.add_trace(go.Histogram(x=losses, nbinsx=80, marker_color="#58a6ff", opacity=0.7, name="Simulated losses"))
     fig6.add_vline(x=row["var_95"], line_color="#e3b341", line_dash="dash", annotation_text=f"VaR {row['var_95']}%", annotation_font_color="#e3b341")
     fig6.add_vline(x=row["cvar_95"], line_color="#f85149", line_dash="dash", annotation_text=f"CVaR {row['cvar_95']}%", annotation_font_color="#f85149")
-    fig6.update_layout(**PLOT_LAYOUT, height=300,
+    fig6.update_layout(**PLOT_LAYOUT, font=_FONT_DEFAULT, height=300,
                        title=dict(text=f"10,000-Scenario Loss Distribution — {sel_co}", font=dict(family="DM Serif Display", size=14, color="#e6edf3")),
                        xaxis_title="% Revenue Loss", yaxis_title="Frequency", showlegend=False)
     st.plotly_chart(fig6, use_container_width=True)
@@ -620,7 +648,7 @@ with tab4:
         f1.add_trace(go.Scatter(x=ci["year"], y=ci["lower_bound"], fill="tonexty", fillcolor="rgba(88,166,255,0.1)", mode="lines", line=dict(width=0), name="Uncertainty"))
         f1.add_trace(go.Scatter(x=ci["year"], y=ci["carbon_intensity"], mode="lines+markers", line=dict(color="#58a6ff", width=2.5), marker=dict(size=7), name="Projection"))
         f1.add_hline(y=co_row.get("carbon_intensity_tCO2e",100), line_dash="dash", line_color="#8b949e", opacity=0.5, annotation_text="2023 baseline", annotation_font_color="#8b949e")
-        f1.update_layout(**PLOT_LAYOUT, height=300, title=dict(text="Carbon Intensity to 2030", font=dict(family="DM Serif Display", size=14, color="#e6edf3")), yaxis_title="tCO₂e / USD M rev")
+        f1.update_layout(**PLOT_LAYOUT, font=_FONT_DEFAULT, height=300, title=dict(text="Carbon Intensity to 2030", font=dict(family="DM Serif Display", size=14, color="#e6edf3")), yaxis_title="tCO₂e / USD M rev")
         st.plotly_chart(f1, use_container_width=True)
     with p2:
         f2 = go.Figure()
@@ -628,9 +656,10 @@ with tab4:
         f2.add_trace(go.Scatter(x=rk["year"], y=rk["transition_risk"], mode="lines+markers", name="Transition", line=dict(color="#bc8cff", width=2)))
         f2.add_trace(go.Scatter(x=rk["year"], y=rk["composite_risk"], mode="lines+markers", name="Composite", line=dict(color="#f85149", width=3, dash="dot")))
         f2.add_hline(y=7.5, line_dash="dash", line_color="#f85149", opacity=0.3, annotation_text="High threshold")
-        f2.update_layout(**PLOT_LAYOUT, height=300, yaxis=dict(range=[0,11], gridcolor="#21262d"),
+        f2.update_layout(**PLOT_LAYOUT, font=_FONT_DEFAULT, height=300,
                          title=dict(text="Risk Score Trajectory", font=dict(family="DM Serif Display", size=14, color="#e6edf3")),
                          legend=dict(orientation="h", y=-0.2, font=dict(color="#e6edf3")))
+        f2.update_yaxes(range=[0, 11], gridcolor="#21262d")
         st.plotly_chart(f2, use_container_width=True)
 
     st.markdown('<div class="section-header" style="font-size:1.1rem;margin-top:2rem">Portfolio — Who is best positioned for 2030?</div>', unsafe_allow_html=True)
@@ -649,10 +678,55 @@ with tab4:
                 hover_data=["Sector","Score","2030 CVaR","Tipping Points"],
                 labels={"2030 Risk": "Composite Risk (0–10)", "Company": ""})
     f3.add_hline(y=7.5, line_dash="dash", line_color="#f85149", opacity=0.3)
-    f3.update_layout(**PLOT_LAYOUT, height=360, xaxis_tickangle=-20,
+    f3.update_layout(**PLOT_LAYOUT, font=_FONT_DEFAULT, height=360, xaxis_tickangle=-20,
                      title=dict(text=f"2030 Portfolio Risk — {fc_sc} Scenario", font=dict(family="DM Serif Display", size=14, color="#e6edf3")),
                      legend=dict(orientation="h", y=1.1, font=dict(color="#e6edf3")))
     st.plotly_chart(f3, use_container_width=True)
+
+    # ── Animated Scatter ──────────────────────────────────────────────────────
+    st.markdown('<div class="section-header" style="font-size:1.1rem">Risk Evolution — Watch Companies Move 2024–2030</div>', unsafe_allow_html=True)
+    st.markdown('<div class="section-sub">Each company traces a path across the risk landscape year by year. Press play to watch the portfolio evolve under the selected scenario — laggards move toward the danger zone, early movers hold steady.</div>', unsafe_allow_html=True)
+    anim_rows = []
+    for _, r in df.iterrows():
+        fc_anim = run_all_forecasts(r.to_dict(), fc_sc)
+        for _, yr_row in fc_anim["risk"].iterrows():
+            var_row = fc_anim["var"][fc_anim["var"]["year"] == yr_row["year"]].iloc[0]
+            anim_rows.append({
+                "company": r["company"], "sector": r["sector"],
+                "year": str(int(yr_row["year"])),
+                "physical_risk": yr_row["physical_risk"],
+                "transition_risk": yr_row["transition_risk"],
+                "composite_risk": yr_row["composite_risk"],
+                "var_95": var_row["var_95"],
+                "revenue": r["revenue_usd_millions"],
+                "pathway": fc_anim["pathway"],
+            })
+    anim_df = pd.DataFrame(anim_rows)
+    pw_colors_anim = {"Early Mover": "#3fb950", "On Track": "#58a6ff", "Laggard": "#e3b341", "Stranded Risk": "#f85149"}
+    anim_df["pathway_clean"] = anim_df["pathway"].str.replace(r"^[^\w]+", "", regex=True)
+    fig_anim = px.scatter(
+        anim_df,
+        x="physical_risk", y="transition_risk",
+        size="var_95", color="pathway_clean",
+        animation_frame="year",
+        animation_group="company",
+        hover_name="company",
+        hover_data={"sector": True, "composite_risk": True, "var_95": True},
+        color_discrete_map={"Early Mover": "#3fb950", "On Track": "#58a6ff", "Laggard": "#e3b341", "Stranded Risk": "#f85149"},
+        size_max=40,
+        range_x=[0, 12], range_y=[0, 12],
+        labels={"physical_risk": "Physical Risk Score", "transition_risk": "Transition Risk Score", "pathway_clean": "Pathway"},
+    )
+    fig_anim.add_hline(y=7.5, line_dash="dash", line_color="#f85149", opacity=0.3)
+    fig_anim.add_vline(x=7.5, line_dash="dash", line_color="#e3b341", opacity=0.3)
+    fig_anim.update_layout(
+        **PLOT_LAYOUT, font=_FONT_DEFAULT, height=500,
+        title=dict(text=f"Risk Trajectory Animation 2024–2030 — {fc_sc} Scenario", font=dict(family="DM Serif Display", size=15, color="#e6edf3")),
+        legend=dict(orientation="h", y=1.08, font=dict(color="#e6edf3")),
+    )
+    fig_anim.layout.updatemenus[0].buttons[0].args[1]["frame"]["duration"] = 800
+    fig_anim.layout.updatemenus[0].buttons[0].args[1]["transition"]["duration"] = 400
+    st.plotly_chart(fig_anim, use_container_width=True)
 
 
 # ─── TAB 5: Geo Map ──────────────────────────────────────────────────────────
@@ -766,6 +840,49 @@ with tab7:
         }),
         use_container_width=True, hide_index=True,
     )
+
+    # ── Heatmap ───────────────────────────────────────────────────────────────
+    st.markdown('<div class="section-header" style="font-size:1.1rem">Full Risk Heatmap</div>', unsafe_allow_html=True)
+    st.markdown('<div class="section-sub">Every company across every risk dimension in one view. Darker red = higher risk or worse score. Darker green = better. Ideal for quick portfolio scanning.</div>', unsafe_allow_html=True)
+    heat_cols = ["physical_risk_score", "transition_risk_score", "var_95", "cvar_95",
+                 "carbon_intensity_tCO2e", "tcfd_disclosure_score", "green_revenue_pct"]
+    heat_labels = ["Physical Risk", "Transition Risk", "VaR 95%", "CVaR 95%",
+                   "Carbon Intensity", "TCFD Score", "Green Revenue %"]
+    heat_df = df.set_index("company")[heat_cols].copy()
+    # Normalise each column 0-1 for color (invert TCFD and green_revenue so red = bad)
+    heat_norm = heat_df.copy()
+    for col in heat_cols:
+        col_min, col_max = heat_df[col].min(), heat_df[col].max()
+        if col_max > col_min:
+            heat_norm[col] = (heat_df[col] - col_min) / (col_max - col_min)
+        else:
+            heat_norm[col] = 0.5
+    # Invert good metrics so red always = bad
+    for col in ["tcfd_disclosure_score", "green_revenue_pct"]:
+        heat_norm[col] = 1 - heat_norm[col]
+    fig_heat = go.Figure(data=go.Heatmap(
+        z=heat_norm.values,
+        x=heat_labels,
+        y=heat_norm.index.tolist(),
+        colorscale=[[0, "#3fb950"], [0.5, "#e3b341"], [1, "#f85149"]],
+        showscale=True,
+        text=heat_df.round(1).values,
+        texttemplate="%{text}",
+        textfont=dict(size=10, family="JetBrains Mono"),
+        hoverongaps=False,
+        hovertemplate="<b>%{y}</b><br>%{x}: %{text}<extra></extra>",
+        colorbar=dict(title=dict(text="Risk Level", font=dict(color="#8b949e")), tickfont=dict(color="#8b949e"),
+                      tickvals=[0, 0.5, 1], ticktext=["Low", "Medium", "High"]),
+    ))
+    fig_heat.update_layout(
+        **PLOT_LAYOUT, font=_FONT_DEFAULT, height=520,
+        title=dict(text="Portfolio Risk Heatmap — All Companies × All Dimensions", font=dict(family="DM Serif Display", size=15, color="#e6edf3")),
+        xaxis=dict(side="top", tickfont=dict(family="DM Sans", color="#e6edf3", size=11)),
+        yaxis=dict(tickfont=dict(family="DM Sans", color="#e6edf3", size=11), autorange="reversed"),
+    )
+    st.plotly_chart(fig_heat, use_container_width=True)
+    st.markdown('<div class="icard icard-blue">🔍 <b>How to read this</b> — scan each row to see a company&#39;s full risk profile. Scan down each column to compare all companies on one dimension. Red = high risk or poor score. Green = low risk or strong score.</div>', unsafe_allow_html=True)
+
     st.download_button("⬇️ Download CSV", df[display_cols].to_csv(index=False).encode("utf-8"),
                        "tcfd_climate_risk.csv", "text/csv")
 
